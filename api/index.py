@@ -11,10 +11,21 @@ import json
 app = FastAPI(title="AI Voice Detection API")
 
 SUPPORTED_LANGUAGES = ["tamil", "english", "hindi", "malayalam", "telugu"]
+SUPPORTED_FORMATS = ["MP3", "WAV", "M4A", "FLAC", "OGG"]
 
 class AudioRequest(BaseModel):
-    audio: str = Field(..., description="Base64-encoded MP3 audio")
+    audio: str = Field(None, description="Base64-encoded audio (legacy field)")
+    audioBase64: str = Field(None, description="Base64-encoded audio data")
     language: str = Field(..., description="Language of the audio")
+    audioFormat: str = Field(None, description="Audio format (MP3, WAV, etc.)")
+    
+    def get_audio_data(self) -> str:
+        """Get audio data from either field"""
+        return self.audioBase64 or self.audio
+    
+    def get_format(self) -> str:
+        """Get audio format, default to MP3"""
+        return (self.audioFormat or "MP3").upper()
 
 class DetectionResponse(BaseModel):
     classification: Literal["AI-generated", "Human-generated"]
@@ -107,14 +118,31 @@ async def detect_voice(
             detail=f"Unsupported language. Supported: {', '.join(SUPPORTED_LANGUAGES)}"
         )
     
+    # Get audio data from either field
+    audio_base64 = request.get_audio_data()
+    if not audio_base64:
+        raise HTTPException(
+            status_code=400,
+            detail="Missing audio data. Provide either 'audio' or 'audioBase64' field"
+        )
+    
+    # Get audio format
+    audio_format = request.get_format()
+    if audio_format not in SUPPORTED_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported audio format. Supported: {', '.join(SUPPORTED_FORMATS)}"
+        )
+    
     # Decode base64 audio
     try:
-        audio_data = base64.b64decode(request.audio)
+        audio_data = base64.b64decode(audio_base64)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid base64 audio data")
     
-    # Save to temp file
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_file:
+    # Save to temp file with appropriate extension
+    file_extension = f".{audio_format.lower()}"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
         temp_file.write(audio_data)
         temp_path = temp_file.name
     
@@ -131,7 +159,11 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "supported_languages": SUPPORTED_LANGUAGES}
+    return {
+        "status": "healthy", 
+        "supported_languages": SUPPORTED_LANGUAGES,
+        "supported_formats": SUPPORTED_FORMATS
+    }
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
