@@ -1,7 +1,6 @@
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from mangum import Mangum
 import base64
 import os
 import tempfile
@@ -10,15 +9,6 @@ from typing import Literal
 import json
 
 app = FastAPI(title="AI Voice Detection API")
-
-# Initialize OpenAI client lazily to avoid startup errors
-def get_openai_client():
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
-    return OpenAI(api_key=api_key)
-
-VALID_API_KEY = os.getenv("API_KEY", "default-api-key-change-in-production")
 
 SUPPORTED_LANGUAGES = ["tamil", "english", "hindi", "malayalam", "telugu"]
 
@@ -32,22 +22,24 @@ class DetectionResponse(BaseModel):
     explanation: str
 
 def verify_api_key(authorization: str = Header(None)):
+    valid_key = os.getenv("API_KEY", "default-api-key-change-in-production")
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
     
-    if authorization.startswith("Bearer "):
-        token = authorization[7:]
-    else:
-        token = authorization
+    token = authorization[7:] if authorization.startswith("Bearer ") else authorization
     
-    if token != VALID_API_KEY:
+    if token != valid_key:
         raise HTTPException(status_code=403, detail="Invalid API key")
     return token
 
 def analyze_audio(audio_path: str, language: str) -> dict:
     """Analyze audio using Whisper and GPT for AI detection"""
     try:
-        client = get_openai_client()
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+        
+        client = OpenAI(api_key=api_key)
         
         # Transcribe audio
         with open(audio_path, "rb") as audio_file:
@@ -126,6 +118,10 @@ async def detect_voice(
         if os.path.exists(temp_path):
             os.unlink(temp_path)
 
+@app.get("/")
+async def root():
+    return {"message": "AI Voice Detection API", "status": "online"}
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "supported_languages": SUPPORTED_LANGUAGES}
@@ -136,6 +132,3 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": f"Internal server error: {str(exc)}"}
     )
-
-# Vercel serverless handler using Mangum
-handler = Mangum(app)
