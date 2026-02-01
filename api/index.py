@@ -1,11 +1,11 @@
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 import base64
 import os
 import tempfile
 from openai import OpenAI
-from typing import Literal
+from typing import Literal, Optional
 import json
 
 app = FastAPI(title="AI Voice Detection API")
@@ -14,10 +14,17 @@ SUPPORTED_LANGUAGES = ["tamil", "english", "hindi", "malayalam", "telugu"]
 SUPPORTED_FORMATS = ["MP3", "WAV", "M4A", "FLAC", "OGG"]
 
 class AudioRequest(BaseModel):
-    audio: str = Field(None, description="Base64-encoded audio (legacy field)")
-    audioBase64: str = Field(None, description="Base64-encoded audio data")
+    audio: Optional[str] = Field(None, description="Base64-encoded audio (legacy field)")
+    audioBase64: Optional[str] = Field(None, description="Base64-encoded audio data")
     language: str = Field(..., description="Language of the audio")
-    audioFormat: str = Field(None, description="Audio format (MP3, WAV, etc.)")
+    audioFormat: Optional[str] = Field(None, description="Audio format (MP3, WAV, etc.)")
+    
+    @model_validator(mode='after')
+    def check_audio_field(self):
+        """Ensure at least one audio field is provided"""
+        if not self.audio and not self.audioBase64:
+            raise ValueError("Either 'audio' or 'audioBase64' field must be provided")
+        return self
     
     def get_audio_data(self) -> str:
         """Get audio data from either field"""
