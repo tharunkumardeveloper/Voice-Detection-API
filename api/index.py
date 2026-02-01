@@ -1,14 +1,23 @@
 from fastapi import FastAPI, HTTPException, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from mangum import Mangum
 import base64
 import os
 import tempfile
 from openai import OpenAI
 from typing import Literal
+import json
 
 app = FastAPI(title="AI Voice Detection API")
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Initialize OpenAI client lazily to avoid startup errors
+def get_openai_client():
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+    return OpenAI(api_key=api_key)
+
 VALID_API_KEY = os.getenv("API_KEY", "default-api-key-change-in-production")
 
 SUPPORTED_LANGUAGES = ["tamil", "english", "hindi", "malayalam", "telugu"]
@@ -38,6 +47,8 @@ def verify_api_key(authorization: str = Header(None)):
 def analyze_audio(audio_path: str, language: str) -> dict:
     """Analyze audio using Whisper and GPT for AI detection"""
     try:
+        client = get_openai_client()
+        
         # Transcribe audio
         with open(audio_path, "rb") as audio_file:
             transcript = client.audio.transcriptions.create(
@@ -76,7 +87,6 @@ Provide your analysis in this exact JSON format:
             response_format={"type": "json_object"}
         )
         
-        import json
         result = json.loads(response.choices[0].message.content)
         return result
         
@@ -127,5 +137,5 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": f"Internal server error: {str(exc)}"}
     )
 
-# Vercel serverless handler
-handler = app
+# Vercel serverless handler using Mangum
+handler = Mangum(app)
