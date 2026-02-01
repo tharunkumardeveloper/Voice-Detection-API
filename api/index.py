@@ -5,6 +5,7 @@ import base64
 import os
 import tempfile
 from openai import OpenAI
+from groq import Groq
 from typing import Literal, Optional
 import json
 
@@ -57,26 +58,56 @@ def verify_api_key(authorization: str = Header(None), x_api_key: str = Header(No
     return token
 
 def analyze_audio(audio_path: str, language: str) -> dict:
-    """Analyze audio using Whisper and GPT for AI detection"""
+    """Analyze audio using Whisper and Groq for AI detection"""
     try:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+        # Get API keys
+        openai_key = os.getenv("OPENAI_API_KEY")
+        groq_key = os.getenv("GROQ_API_KEY")
         
-        client = OpenAI(api_key=api_key)
+        if not groq_key:
+            raise HTTPException(status_code=500, detail="Groq API key not configured")
         
-        # Transcribe audio
-        with open(audio_path, "rb") as audio_file:
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                language=language[:2] if language != "malayalam" else "ml"
-            )
+        # Try to transcribe with OpenAI Whisper if available, otherwise use Groq
+        transcript_text = ""
         
-        # Analyze with GPT-4
+        if openai_key:
+            try:
+                client = OpenAI(api_key=openai_key)
+                with open(audio_path, "rb") as audio_file:
+                    transcript = client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file,
+                        language=language[:2] if language != "malayalam" else "ml"
+                    )
+                transcript_text = transcript.text
+            except Exception as whisper_error:
+                # If OpenAI fails, use Groq's Whisper
+                print(f"OpenAI Whisper failed, using Groq: {whisper_error}")
+                groq_client = Groq(api_key=groq_key)
+                with open(audio_path, "rb") as audio_file:
+                    transcript = groq_client.audio.transcriptions.create(
+                        model="whisper-large-v3",
+                        file=audio_file,
+                        language=language[:2] if language != "malayalam" else "ml"
+                    )
+                transcript_text = transcript.text
+        else:
+            # Use Groq's Whisper
+            groq_client = Groq(api_key=groq_key)
+            with open(audio_path, "rb") as audio_file:
+                transcript = groq_client.audio.transcriptions.create(
+                    model="whisper-large-v3",
+                    file=audio_file,
+                    language=language[:2] if language != "malayalam" else "ml"
+                )
+            transcript_text = transcript.text
+        
+        # Analyze with Groq (free and fast)
+        groq_client = Groq(api_key=groq_key)
+        
         analysis_prompt = f"""Analyze this audio transcription to determine if it's AI-generated or human-generated voice.
 
-Transcription: "{transcript.text}"
+Transcription: "{transcript_text}"
 Language: {language}
 
 Consider these factors:
@@ -93,8 +124,8 @@ Provide your analysis in this exact JSON format:
   "explanation": "detailed explanation"
 }}"""
 
-        response = client.chat.completions.create(
-            model="gpt-4-turbo-preview",
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": "You are an expert in audio forensics and AI voice detection. Respond only with valid JSON."},
                 {"role": "user", "content": analysis_prompt}
