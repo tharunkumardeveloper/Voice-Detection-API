@@ -21,12 +21,18 @@ class DetectionResponse(BaseModel):
     confidence: float = Field(..., ge=0.0, le=1.0)
     explanation: str
 
-def verify_api_key(authorization: str = Header(None)):
+def verify_api_key(authorization: str = Header(None), x_api_key: str = Header(None)):
     valid_key = os.getenv("API_KEY", "default-api-key-change-in-production")
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
     
-    token = authorization[7:] if authorization.startswith("Bearer ") else authorization
+    # Support both x-api-key and Authorization headers
+    token = None
+    if x_api_key:
+        token = x_api_key
+    elif authorization:
+        token = authorization[7:] if authorization.startswith("Bearer ") else authorization
+    
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing API key (use x-api-key or Authorization header)")
     
     if token != valid_key:
         raise HTTPException(status_code=403, detail="Invalid API key")
@@ -88,10 +94,11 @@ Provide your analysis in this exact JSON format:
 @app.post("/detect", response_model=DetectionResponse)
 async def detect_voice(
     request: AudioRequest,
-    authorization: str = Header(None)
+    authorization: str = Header(None),
+    x_api_key: str = Header(None)
 ):
     """Detect if audio is AI-generated or human-generated"""
-    verify_api_key(authorization)
+    verify_api_key(authorization, x_api_key)
     
     # Validate language
     if request.language.lower() not in SUPPORTED_LANGUAGES:
